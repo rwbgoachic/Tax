@@ -8,7 +8,8 @@
     "build": "tsc"
   },
   "dependencies": {
-    "decimal.js": "^10.4.3"
+    "decimal.js": "^10.4.3",
+    "dotenv-encrypted": "^1.0.0"
   },
   "devDependencies": {
     "tsx": "^4.7.0",

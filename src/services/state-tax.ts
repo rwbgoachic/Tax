@@ -4,6 +4,7 @@ import { StateTaxRule, TaxCalculationResult } from '../types/tax';
 export class TaxCalculator {
   private static instance: TaxCalculator;
   private stateTaxRules: StateTaxRule[];
+  private cache: Map<string, TaxCalculationResult>;
 
   private constructor() {
     this.stateTaxRules = [
@@ -495,6 +496,7 @@ export class TaxCalculator {
         effectiveDate: '2024-01-01'
       }
     ];
+    this.cache = new Map();
   }
 
   public static getInstance(): TaxCalculator {
@@ -504,40 +506,75 @@ export class TaxCalculator {
     return TaxCalculator.instance;
   }
 
+  private getCacheKey(stateCode: string, subtotal: number, localRate: number): string {
+    return `${stateCode}-${subtotal}-${localRate}`;
+  }
+
   public calculateTax(stateCode: string, subtotal: number, localRate: number = 0): TaxCalculationResult {
-    const rule = this.stateTaxRules.find(r => r.stateCode === stateCode);
-    if (!rule) {
-      throw new Error('Invalid state code');
+    try {
+      const cacheKey = this.getCacheKey(stateCode, subtotal, localRate);
+      const cachedResult = this.cache.get(cacheKey);
+      
+      if (cachedResult) {
+        return cachedResult;
+      }
+
+      const rule = this.stateTaxRules.find(r => r.stateCode === stateCode);
+      if (!rule) {
+        throw new Error('Invalid state code');
+      }
+
+      if (localRate > 0 && !rule.localTaxEnabled) {
+        throw new Error('Local tax not enabled for this state');
+      }
+
+      if (localRate > (rule.maxLocalRate || 0)) {
+        throw new Error('Local rate exceeds maximum');
+      }
+
+      const subtotalDecimal = new Decimal(subtotal);
+      const stateTax = subtotalDecimal.times(rule.baseRate).toDecimalPlaces(2);
+      const localTax = rule.localTaxEnabled ? subtotalDecimal.times(localRate).toDecimalPlaces(2) : new Decimal(0);
+      const totalTax = stateTax.plus(localTax);
+      const total = subtotalDecimal.plus(totalTax);
+
+      const result = {
+        subtotal: subtotalDecimal.toNumber(),
+        stateTax: stateTax.toNumber(),
+        localTax: localTax.toNumber(),
+        totalTax: totalTax.toNumber(),
+        total: total.toNumber()
+      };
+
+      this.cache.set(cacheKey, result);
+      return result;
+    } catch (error) {
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error('An unexpected error occurred while calculating tax');
     }
-
-    if (localRate > 0 && !rule.localTaxEnabled) {
-      throw new Error('Local tax not enabled for this state');
-    }
-
-    if (localRate > (rule.maxLocalRate || 0)) {
-      throw new Error('Local rate exceeds maximum');
-    }
-
-    const subtotalDecimal = new Decimal(subtotal);
-    const stateTax = subtotalDecimal.times(rule.baseRate).toDecimalPlaces(2);
-    const localTax = rule.localTaxEnabled ? subtotalDecimal.times(localRate).toDecimalPlaces(2) : new Decimal(0);
-    const totalTax = stateTax.plus(localTax);
-    const total = subtotalDecimal.plus(totalTax);
-
-    return {
-      subtotal: subtotalDecimal.toNumber(),
-      stateTax: stateTax.toNumber(),
-      localTax: localTax.toNumber(),
-      totalTax: totalTax.toNumber(),
-      total: total.toNumber()
-    };
   }
 
   public getStateTaxRule(stateCode: string): StateTaxRule | undefined {
-    return this.stateTaxRules.find(r => r.stateCode === stateCode);
+    try {
+      return this.stateTaxRules.find(r => r.stateCode === stateCode);
+    } catch (error) {
+      console.error('Error retrieving state tax rule:', error);
+      return undefined;
+    }
   }
 
   public getAllStateTaxRules(): StateTaxRule[] {
-    return [...this.stateTaxRules];
+    try {
+      return [...this.stateTaxRules];
+    } catch (error) {
+      console.error('Error retrieving all state tax rules:', error);
+      return [];
+    }
+  }
+
+  public clearCache(): void {
+    this.cache.clear();
   }
 }
