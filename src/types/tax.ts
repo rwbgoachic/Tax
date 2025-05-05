@@ -16,4 +16,14 @@ export interface TaxCalculationResult {
   localTax: number;
   totalTax: number;
   total: number;
+  exemptions?: string[];
+  specialDistricts?: boolean;
+}
+
+export interface TaxCalculationOptions {
+  stateCode: string;
+  subtotal: number;
+  localRate?: number;
+  zipCode?: string;
+  productType?: string;
 }

@@ -510,8 +510,21 @@ export class TaxCalculator {
     return `${stateCode}-${subtotal}-${localRate}`;
   }
 
-  public calculateTax(stateCode: string, subtotal: number, localRate: number = 0): TaxCalculationResult {
+  private validateZipCode(zipCode: string): boolean {
+    return /^\d{5}$/.test(zipCode);
+  }
+
+  private getFallbackRate(stateCode: string): number {
+    const rule = this.getStateTaxRule(stateCode);
+    return rule ? rule.baseRate : 0;
+  }
+
+  public calculateTax(stateCode: string, subtotal: number, localRate: number = 0, zipCode?: string): TaxCalculationResult {
     try {
+      if (zipCode && !this.validateZipCode(zipCode)) {
+        throw new Error('Invalid ZIP code format');
+      }
+
       const cacheKey = this.getCacheKey(stateCode, subtotal, localRate);
       const cachedResult = this.cache.get(cacheKey);
       
@@ -549,10 +562,25 @@ export class TaxCalculator {
       this.cache.set(cacheKey, result);
       return result;
     } catch (error) {
-      if (error instanceof Error) {
-        throw error;
+      // Attempt to use fallback rate if primary calculation fails
+      try {
+        const fallbackRate = this.getFallbackRate(stateCode);
+        const subtotalDecimal = new Decimal(subtotal);
+        const fallbackTax = subtotalDecimal.times(fallbackRate).toDecimalPlaces(2);
+        
+        return {
+          subtotal: subtotalDecimal.toNumber(),
+          stateTax: fallbackTax.toNumber(),
+          localTax: 0,
+          totalTax: fallbackTax.toNumber(),
+          total: subtotalDecimal.plus(fallbackTax).toNumber()
+        };
+      } catch (fallbackError) {
+        if (error instanceof Error) {
+          throw error;
+        }
+        throw new Error('An unexpected error occurred while calculating tax');
       }
-      throw new Error('An unexpected error occurred while calculating tax');
     }
   }
 
