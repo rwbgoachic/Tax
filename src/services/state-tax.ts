@@ -1,5 +1,5 @@
 import Decimal from 'decimal.js';
-import { StateTaxRule, TaxCalculationResult } from '../types/tax';
+import { StateTaxRule, TaxCalculationResult, TaxCalculationOptions } from '../types/tax';
 
 export class TaxCalculator {
   private static instance: TaxCalculator;
@@ -506,8 +506,9 @@ export class TaxCalculator {
     return TaxCalculator.instance;
   }
 
-  private getCacheKey(stateCode: string, subtotal: number, localRate: number): string {
-    return `${stateCode}-${subtotal}-${localRate}`;
+  private getCacheKey(options: TaxCalculationOptions): string {
+    const { stateCode, subtotal, localRate = 0, zipCode = '', productType = '' } = options;
+    return `${stateCode}-${subtotal}-${localRate}-${zipCode}-${productType}`;
   }
 
   private validateZipCode(zipCode: string): boolean {
@@ -519,13 +520,15 @@ export class TaxCalculator {
     return rule ? rule.baseRate : 0;
   }
 
-  public calculateTax(stateCode: string, subtotal: number, localRate: number = 0, zipCode?: string): TaxCalculationResult {
+  public calculateTax(options: TaxCalculationOptions): TaxCalculationResult {
     try {
+      const { stateCode, subtotal, localRate = 0, zipCode, productType } = options;
+
       if (zipCode && !this.validateZipCode(zipCode)) {
         throw new Error('Invalid ZIP code format');
       }
 
-      const cacheKey = this.getCacheKey(stateCode, subtotal, localRate);
+      const cacheKey = this.getCacheKey(options);
       const cachedResult = this.cache.get(cacheKey);
       
       if (cachedResult) {
@@ -546,17 +549,28 @@ export class TaxCalculator {
       }
 
       const subtotalDecimal = new Decimal(subtotal);
-      const stateTax = subtotalDecimal.times(rule.baseRate).toDecimalPlaces(2);
-      const localTax = rule.localTaxEnabled ? subtotalDecimal.times(localRate).toDecimalPlaces(2) : new Decimal(0);
+      let stateTax = subtotalDecimal.times(rule.baseRate);
+      let localTax = rule.localTaxEnabled ? subtotalDecimal.times(localRate) : new Decimal(0);
+
+      // Apply exemptions if product type is specified
+      if (productType && rule.exemptions.includes(productType)) {
+        stateTax = new Decimal(0);
+        localTax = new Decimal(0);
+      }
+
+      stateTax = stateTax.toDecimalPlaces(2);
+      localTax = localTax.toDecimalPlaces(2);
       const totalTax = stateTax.plus(localTax);
       const total = subtotalDecimal.plus(totalTax);
 
-      const result = {
+      const result: TaxCalculationResult = {
         subtotal: subtotalDecimal.toNumber(),
         stateTax: stateTax.toNumber(),
         localTax: localTax.toNumber(),
         totalTax: totalTax.toNumber(),
-        total: total.toNumber()
+        total: total.toNumber(),
+        exemptions: rule.exemptions,
+        specialDistricts: rule.specialDistricts
       };
 
       this.cache.set(cacheKey, result);
@@ -564,8 +578,8 @@ export class TaxCalculator {
     } catch (error) {
       // Attempt to use fallback rate if primary calculation fails
       try {
-        const fallbackRate = this.getFallbackRate(stateCode);
-        const subtotalDecimal = new Decimal(subtotal);
+        const fallbackRate = this.getFallbackRate(options.stateCode);
+        const subtotalDecimal = new Decimal(options.subtotal);
         const fallbackTax = subtotalDecimal.times(fallbackRate).toDecimalPlaces(2);
         
         return {
